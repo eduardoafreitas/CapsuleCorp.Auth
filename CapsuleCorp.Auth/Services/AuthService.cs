@@ -1,0 +1,93 @@
+﻿using CapsuleCorp.Auth.API.Data;
+using CapsuleCorp.Auth.DTOs;
+using CapsuleCorp.Auth.Interfaces;
+using CapsuleCorp.Auth.Models;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+
+namespace CapsuleCorp.Auth.Services
+{
+    public class AuthService : IAuthService
+    {
+        private readonly AppDbContext _context;
+        private readonly IConfiguration _configuration;
+
+        public AuthService(AppDbContext context, IConfiguration configuration)
+        {
+            _context = context;
+            _configuration = configuration;
+        }
+
+        public async Task<User> RegisterAsync(RegisterUserDto dto)
+        {
+            if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
+                throw new Exception("Este e-mail já está em uso.");
+
+            var user = new User
+            {
+                Id = Guid.NewGuid(),
+                Name = dto.Name,
+                Email = dto.Email,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
+                CreateDate = DateTime.UtcNow,
+                //LastUpdateDate = DateTime.UtcNow
+            };
+
+            _context.Users.Add(user);
+            await _context.SaveChangesAsync();
+
+            return user;
+        }
+
+        public async Task<string?> LoginAsync(LoginDto loginDto)
+        {
+            // 1. Busca o usuário pelo e-mail
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == loginDto.Email);
+
+            // 2. Verifica se existe e se a senha bate (BCrypt)
+            if (user == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
+            {
+                return null;
+            }
+
+            // 3. Gera o Token JWT
+            return CreateToken(user);
+        }
+
+        private string CreateToken(User user)
+        {
+            // Define as "Claims" (informações que vão dentro do token)
+            var claims = new List<Claim>
+            {
+                new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+                new Claim(ClaimTypes.Email, user.Email),
+                new Claim(ClaimTypes.Name, user.Name)
+            };
+
+            // Utiliza a chave do appsettings.json
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
+                _configuration.GetSection("Jwt:Key").Value!));
+
+            // Cria a assinatura digital (o selo de autenticidade)
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256Signature);
+
+            // Monta o "pacote" do token
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(claims),
+                Expires = DateTime.UtcNow.AddHours(2),
+                SigningCredentials = creds,
+                Issuer = _configuration.GetSection("Jwt:Issuer").Value,
+                Audience = _configuration.GetSection("Jwt:Audience").Value
+            };
+
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var token = tokenHandler.CreateToken(tokenDescriptor);
+
+            return tokenHandler.WriteToken(token);
+        }
+    }
+}
