@@ -2,6 +2,7 @@
 using CapsuleCorp.Auth.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace CapsuleCorp.Auth.Controllers
 {
@@ -48,6 +49,41 @@ namespace CapsuleCorp.Auth.Controllers
 
             // Se deu certo, retornamos o Token JWT para o cliente
             return Ok(new { token = token });
+        }
+
+        [Authorize] // Garante que apenas usuários com Token JWT válido acessem
+        [HttpPut("update-profile")]
+        public async Task<IActionResult> UpdateProfile([FromBody] UpdateUserDto dto)
+        {
+            try
+            {
+                // Camada de Segurança: Extraímos o Guid do Claim 'NameIdentifier' injetado pelo Middleware de Auth
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+                if (string.IsNullOrEmpty(userIdClaim))
+                    return Unauthorized(new { message = "Identificador do usuário não encontrado no token." });
+
+                // Conversão do ID do token para o tipo Guid (Type Safety)
+                var userId = Guid.Parse(userIdClaim);
+
+                // Chamada do serviço com a lógica de negócio
+                var updatedUser = await _authService.UpdateUserAsync(userId, dto);
+
+                var fusoBrasilia = TimeZoneInfo.FindSystemTimeZoneById("E. South America Standard Time");
+
+                var dataLocal = TimeZoneInfo.ConvertTimeFromUtc(updatedUser.LastUpdateDate ?? DateTime.UtcNow, fusoBrasilia);
+
+                return Ok(new
+                {
+                    message = "Perfil atualizado com sucesso!",
+                    user = new { updatedUser.Name, updatedUser.Email },
+                    updatedAtLocal = dataLocal.ToString("yyyy-MM-dd HH:mm:ss.fffffff")
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
         }
 
         [HttpGet]

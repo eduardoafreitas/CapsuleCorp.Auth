@@ -57,6 +57,34 @@ namespace CapsuleCorp.Auth.Services
             return CreateToken(user);
         }
 
+        public async Task<User> UpdateUserAsync(Guid userId, UpdateUserDto dto)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null) throw new Exception("Usuário não encontrado.");
+
+            // Valida se o novo e-mail já pertence a outro usuário
+            //if (user.Email != dto.Email && await _context.Users.AnyAsync(u => u.Email == dto.Email))
+            //    throw new Exception("Este e-mail já está em uso por outra conta.");
+
+            user.Name = dto.Name;
+            user.Email = dto.Email;
+            user.LastUpdateDate = DateTime.UtcNow;
+
+            // Lógica de Troca de Senha (só ocorre se ambos os campos forem preenchidos)
+            if (!string.IsNullOrEmpty(dto.CurrentPassword) && !string.IsNullOrEmpty(dto.NewPassword))
+            {
+                if (!BCrypt.Net.BCrypt.Verify(dto.CurrentPassword, user.PasswordHash))
+                    throw new Exception("A senha atual informada está incorreta.");
+
+                user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword);
+            }
+
+            _context.Users.Update(user);
+            await _context.SaveChangesAsync();
+
+            return user;
+        }
+
         private string CreateToken(User user)
         {
             // Define as "Claims" (informações que vão dentro do token)
